@@ -1,0 +1,189 @@
+SERVER.java
+
+import java.io.*;   // BufferedReader, PrintWriter, File, FileReader - stream and file I/O
+          import java.net.*; // ServerSocket, Socket - TCP networking classes
+
+          public class FileServer {
+              public static void main(String[] args) throws IOException {
+                  // Create a TCP server socket bound to port 6000.
+                  // This tells the OS: "deliver to me any TCP connection made
+                  // to port 6000 of this machine."
+                  ServerSocket serverSocket = new ServerSocket(6000);
+
+                  // ProcessHandle.current().pid() returns the PID of this very
+                  // JVM process - the same PID is handed to every client.
+                  long serverPid = ProcessHandle.current().pid();
+
+                  System.out.println("Concurrent File Server Started on port 6000 (PID: " + serverPid + ")");
+
+                  // Infinite loop - the server must keep running and keep
+                  // accepting new clients for as long as it is alive.
+                  while (true) {
+                      // accept() BLOCKS (waits) until a client connects.
+                      // It then returns a new Socket, the private communication
+                      // channel with that one client.
+                      Socket socket = serverSocket.accept();
+                      System.out.println("New client connected: " + socket.getInetAddress());
+
+                      // Hand this client's socket to a new thread, along with the
+                      // server's PID, so the main loop is freed immediately and can
+                      // go back to accept() the next client while this thread
+                      // serves the current one.
+                      FileHandler handler = new FileHandler(socket, serverPid);
+                      handler.start();
+                  }
+              }
+          }
+
+          /* ------------------------------------------------------------------
+           FileHandler
+           One object (and one thread) per connected client. It reads the
+           requested file name, checks for the file, and sends back the PID
+           plus either the file's contents or a "not found" message.
+           ------------------------------------------------------------------ */
+          class FileHandler extends Thread {   // extends Thread => can run concurrently
+              private Socket socket;           // the TCP connection to this particular client
+              private long serverPid;          // the server's PID, sent to every client
+
+              // Constructor: remember which socket this thread must serve, and
+              // the PID it must report back.
+              FileHandler(Socket socket, long serverPid) {
+                  this.socket = socket;
+                  this.serverPid = serverPid;
+              }
+
+              // run() is executed automatically in its own thread by start().
+              public void run() {
+
+
+
+
+               // try-with-resources: both streams are closed automatically
+               // once this block finishes, even if an exception occurs.
+               try (
+                   // getInputStream() -> raw bytes arriving from the client;
+                   // BufferedReader lets us read a whole line (the file name)
+                   // at a time.
+                   BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                   // PrintWriter with auto-flush "true" pushes every line we
+                   // print to the network immediately.
+                   PrintWriter out = new PrintWriter(socket.getOutputStream(), true)
+               ) {
+                   // By protocol, the client sends exactly one line: the name
+                   // of the file it wants.
+                   String fileName = in.readLine();
+                   System.out.println("Requested file: " + fileName + " from " + socket.getInetAddress());
+
+                  // The PID is always sent first, regardless of whether the
+                  // file exists, so the client can display it either way.
+                  out.println("PID:" + serverPid);
+
+                  // Look for the requested file on the server's local disk.
+                  File file = new File(fileName);
+
+                  if (file.exists() && !file.isDirectory()) {
+                      // Tell the client a file is coming, then stream it
+                      // line by line.
+                      out.println("FOUND");
+                      BufferedReader fileReader = new BufferedReader(new FileReader(file));
+                      String line;
+                      while ((line = fileReader.readLine()) != null) {
+                          out.println(line);
+                      }
+                      fileReader.close();
+                  } else {
+                      // File missing (or the name points to a directory) -
+                      // tell the client and send an explanatory message
+                      // instead of file data.
+                      out.println("NOTFOUND");
+                      out.println("Requested file \"" + fileName + "\" does not exist on the server.");
+                  }
+
+                  // A fixed sentinel line marks the end of the response, so
+                  // the client knows exactly when to stop reading.
+                  out.println("<<END>>");
+
+               } catch (IOException e) {
+                   // Any I/O failure (e.g. client disconnected mid-transfer)
+                   // is reported but does not crash the server or affect
+                   // other threads.
+                   e.printStackTrace();
+               } finally {
+                   try {
+                       // Release the socket and its OS resources once the
+                       // response has been fully sent.
+                       socket.close();
+                   } catch (IOException e) {
+                   }
+               }
+           }
+       }
+
+
+       CLIENT.java
+
+
+       import java.io.*;          // BufferedReader, PrintWriter - stream I/O
+
+
+
+
+         import java.net.*;        // Socket - the client side of a TCP connection
+         import java.util.Scanner; // Scanner - to read what the user types
+
+         public class FileClient {
+             public static void main(String[] args) throws IOException {
+                 Scanner sc = new Scanner(System.in);
+
+                 System.out.print("Enter server IP address: ");
+                 String serverIP = sc.nextLine();
+                 System.out.print("Enter server port number: ");
+                 int serverPort = Integer.parseInt(sc.nextLine());
+
+                 // Open a TCP connection to the server. "localhost"/127.0.0.1 =
+                 // this same machine; use the server's actual IP when testing
+                 // across different computers.
+                 Socket socket = new Socket(serverIP, serverPort);
+
+                 // Stream for reading whatever the server sends back.
+                 BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                 // Stream for sending the file request. "true" enables
+                 // auto-flush so the request is not delayed in a buffer.
+                 PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+
+                 System.out.print("Enter the name of the file to request: ");
+                 String fileName = sc.nextLine();
+
+                 // By protocol, the first (and only) line we send is the
+                 // requested file name.
+                 out.println(fileName);
+
+                 // By protocol, the server's first line is always "PID:<pid>",
+                 // no matter whether the file was found or not.
+                 String pidLine = in.readLine();
+                 // The second line is a status flag: either "FOUND" or "NOTFOUND".
+                 String status = in.readLine();
+
+                 System.out.println();
+                 System.out.println("Response from server (" + pidLine + ")");
+
+                 if (status.equals("FOUND")) {
+                     // Keep reading and printing lines until the sentinel
+                     // "<<END>>" marks the end of the file's contents.
+                     System.out.println("----- File Contents -----");
+                     String line;
+                     while (!(line = in.readLine()).equals("<<END>>")) {
+                         System.out.println(line);
+                     }
+                 } else {
+                     // Not found: the very next line is the explanatory
+                     // message, followed immediately by the "<<END>>" sentinel.
+                     String message = in.readLine();
+                     in.readLine(); // consume the "<<END>>" sentinel line
+                     System.out.println(message);
+                 }
+
+                 // Close the socket once the full response has been read.
+                 socket.close();
+             }
+         }
