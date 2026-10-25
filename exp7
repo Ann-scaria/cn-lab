@@ -1,0 +1,233 @@
+SERVER.java
+
+import java.io.*;     // BufferedReader, PrintWriter, IOException - stream I/O
+import java.net.*;    // ServerSocket, Socket - TCP networking classes
+import java.util.*;   // Vector - thread-safe list used to hold the clients
+
+public class ChatServer {
+
+    // A shared list of every connected client's handler object.
+    // Vector is used because it is synchronized, so several client
+    // threads can add/remove/iterate over it without corrupting it.
+    // It is static so that every ClientHandler shares the same list.
+    static Vector<ClientHandler> clients = new Vector<>();
+
+    public static void main(String[] args) throws Exception {
+
+        // Create a TCP server socket bound to port 5000.
+        // This tells the OS: "deliver to me any TCP connection made
+        // to port 5000 of this machine."
+        ServerSocket serverSocket = new ServerSocket(5000);
+
+        System.out.println("Chat Server Started...");      // confirmation message
+
+        // Infinite loop - the server must keep running and keep
+        // accepting new clients for as long as the chat is alive.
+        while (true) {
+
+             // accept() BLOCKS (waits) until a client connects.
+             // It then returns a new Socket which represents the
+             // private communication channel with THAT client.
+             Socket socket = serverSocket.accept();
+
+             System.out.println("New client connected");
+
+             // Wrap the client's socket in a handler object.
+             ClientHandler handler = new ClientHandler(socket);
+
+             // Register the client so that broadcasts reach it.
+             clients.add(handler);
+
+
+
+
+
+            // start() runs the handler's run() method in a NEW thread.
+            // This is the key to multi-user support: the main loop is
+            // freed immediately and can go back to accept() the next
+            // client, while this thread serves the current client.
+            handler.start();
+        }
+    }
+}
+
+/* ------------------------------------------------------------------
+   ClientHandler
+   One object (and one thread) per connected client. It listens to
+   that client and forwards whatever it says to everybody else.
+   ------------------------------------------------------------------ */
+class ClientHandler extends Thread {   // extends Thread => can run concurrently
+
+    Socket socket;            // the TCP connection to this particular client
+    BufferedReader in;        // stream used to READ text sent by the client
+    PrintWriter out;          // stream used to WRITE text back to the client
+    String name;              // the nickname this client chose
+
+    // Constructor: set up the read/write streams over the socket.
+    ClientHandler(Socket socket) throws IOException {
+
+        this.socket = socket;
+
+        // getInputStream() -> raw bytes arriving from the client
+        // InputStreamReader -> converts those bytes into characters
+        // BufferedReader    -> lets us read a whole line at a time
+        in = new BufferedReader(
+                new InputStreamReader(socket.getInputStream()));
+
+        // PrintWriter gives us println(). The second argument "true"
+        // enables AUTO-FLUSH, so each message is pushed to the network
+        // immediately instead of sitting in the buffer.
+        out = new PrintWriter(socket.getOutputStream(), true);
+    }
+
+    // run() is executed automatically in its own thread by start().
+    public void run() {
+
+        try {
+
+            // By protocol, the very first line a client sends is its name.
+            name = in.readLine();
+
+            // Announce the new arrival to everyone already in the chat.
+            broadcast(name + " joined the chat");
+
+            String message;
+
+            // readLine() blocks until the client types something.
+            // It returns null when the client closes the connection,
+            // which ends the loop and takes us to the finally block.
+            while ((message = in.readLine()) != null) {
+
+                // Prefix the sender's name so others know who spoke.
+                broadcast(name + ": " + message);
+
+            }
+
+        } catch (Exception e) {
+            // An abrupt disconnection throws an exception. We ignore it
+            // because the finally block below performs the cleanup.
+        } finally {
+
+            try {
+
+                // Remove this client so we stop broadcasting to a dead socket.
+                ChatServer.clients.remove(this);
+
+                // Tell the remaining users that this person has left.
+
+
+
+
+
+                broadcast(name + " left the chat");
+
+                // Release the socket and its OS resources.
+                socket.close();
+
+            } catch (Exception e) {
+
+            }
+        }
+    }
+
+    // Send the given message to every connected client except the sender.
+    void broadcast(String message) {
+
+        // Iterate over the shared list of handlers.
+        for (ClientHandler client : ChatServer.clients) {
+
+            // "client != this" skips the sender, so a user does not
+            // see an echo of their own message.
+            if (client != this) {
+
+                // Writing to another handler's output stream delivers
+                // the text to that handler's client over TCP.
+                client.out.println(message);
+
+            }
+        }
+    }
+}
+
+
+
+
+
+CLIENT.java
+
+import java.io.*;           // BufferedReader, PrintWriter - stream I/O
+import java.net.*;          // Socket - the client side of a TCP connection
+import java.util.Scanner;   // Scanner - to read what the user types
+
+public class ChatClient {
+
+    public static void main(String[] args) throws Exception {
+
+        // Open a TCP connection to the server.
+        // "localhost" = this same machine; replace it with the server's
+        // IP address (e.g. "192.168.1.5") when testing across computers.
+        // 5000 must match the port the server is listening on.
+        Socket socket = new Socket("localhost", 5000);
+
+        // Stream for reading messages SENT BY the server.
+        BufferedReader in = new BufferedReader(
+                new InputStreamReader(socket.getInputStream()));
+
+        // Stream for sending messages TO the server.
+        // "true" enables auto-flush so messages are not delayed.
+        PrintWriter out = new PrintWriter(
+                socket.getOutputStream(), true);
+
+        // Scanner reads lines typed on the keyboard (standard input).
+        Scanner sc = new Scanner(System.in);
+
+        System.out.print("Enter your name: ");
+        String name = sc.nextLine();
+
+        // The first line sent must be the nickname - the server
+        // expects this and uses it to label our messages.
+        out.println(name);
+
+        /* A separate RECEIVER thread is essential. Reading from the
+
+
+
+
+
+            keyboard and reading from the network both BLOCK. With only
+            one thread the program would freeze while waiting for input
+            and could never display incoming messages. Two threads let
+            both happen at the same time. */
+         Thread receive = new Thread(() -> {
+
+               try {
+
+                  String msg;
+
+                  // Keep reading lines from the server until the
+                  // connection is closed (readLine() returns null).
+                  while ((msg = in.readLine()) != null) {
+
+                       System.out.println(msg);   // show it on the screen
+
+                  }
+
+               } catch (Exception e) {
+                   // Connection closed or lost - simply stop receiving.
+               }
+
+         });
+
+         receive.start();    // launch the receiver thread
+
+         // MAIN thread: keeps sending. It reads a line from the keyboard
+         // and forwards it to the server, which broadcasts it to others.
+         while (true) {
+
+               String message = sc.nextLine();
+
+               out.println(message);
+
+         }
+    }
+}
