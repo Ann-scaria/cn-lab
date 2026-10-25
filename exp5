@@ -1,0 +1,162 @@
+SERVER.java
+
+
+import java.io.*;
+import java.net.*;
+
+public class server {
+
+    public static void main(String[] args) throws Exception {
+
+        ServerSocket server = new ServerSocket(9002);
+        System.out.println("Server waiting for connection...");
+
+        Socket socket = server.accept();
+        System.out.println("Client Connected.");
+
+        ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
+
+        int n = in.readInt();
+
+        int[][] matrix = (int[][]) in.readObject();
+
+        System.out.println("\nReceived Matrix:");
+
+        for(int i=0;i<n;i++)
+        {
+            for(int j=0;j<n;j++)
+                System.out.print(matrix[i][j]+" ");
+            System.out.println();
+        }
+
+        boolean upper=true;
+        boolean lower=true;
+        boolean diagonal=true;
+
+        for(int i=0;i<n;i++)
+        {
+            for(int j=0;j<n;j++)
+            {
+                if(i>j && matrix[i][j]!=0)
+                    upper=false;
+
+                if(i<j && matrix[i][j]!=0)
+                    lower=false;
+
+                if(i!=j && matrix[i][j]!=0)
+                    diagonal=false;
+            }
+        }
+
+        String result;
+
+        if(diagonal)
+            result="Diagonal Matrix";
+        else if(upper)
+            result="Upper Triangular Matrix";
+        else if(lower)
+            result="Lower Triangular Matrix";
+        else
+            result="Normal Matrix";
+
+        System.out.println("\nMatrix Type : "+result);
+
+        DataOutputStream out =
+                new DataOutputStream(socket.getOutputStream());
+
+        out.writeUTF(result);
+
+        socket.close();
+        server.close();
+    }
+}
+
+
+
+
+
+
+CLIENT.java
+
+import java.io.*;
+import java.net.*;
+import java.util.*;
+
+public class client {
+
+    public static void main(String[] args) throws Exception {
+
+        Socket socket = new Socket("localhost",9002);
+
+        Scanner sc = new Scanner(System.in);
+
+        Random rand = new Random();
+
+        System.out.print("Enter order of matrix : ");
+        int n=sc.nextInt();
+
+        int[][] matrix=new int[n][n];
+
+        for(int i=0;i<n;i++)
+        {
+            for(int j=0;j<n;j++)
+            {
+                matrix[i][j]=rand.nextInt(50)+1;
+            }
+        }
+
+        int type=rand.nextInt(4);
+
+        switch(type)
+        {
+            case 0:         //Upper
+                for(int i=0;i<n;i++)
+                    for(int j=0;j<n;j++)
+                        if(i>j)
+                            matrix[i][j]=0;
+                break;
+
+            case 1:         //Lower
+                for(int i=0;i<n;i++)
+                    for(int j=0;j<n;j++)
+                        if(i<j)
+                            matrix[i][j]=0;
+                break;
+
+            case 2:         //Diagonal
+                for(int i=0;i<n;i++)
+                    for(int j=0;j<n;j++)
+                        if(i!=j)
+                            matrix[i][j]=0;
+                break;
+
+            default:        //Normal Matrix
+                break;
+        }
+
+        System.out.println("\nGenerated Matrix");
+
+        for(int i=0;i<n;i++)
+        {
+            for(int j=0;j<n;j++)
+                System.out.print(matrix[i][j]+" ");
+            System.out.println();
+        }
+
+        ObjectOutputStream out =
+                new ObjectOutputStream(socket.getOutputStream());
+
+        out.writeInt(n);
+        out.writeObject(matrix);
+        out.flush();
+
+        DataInputStream in =
+                new DataInputStream(socket.getInputStream());
+
+        String result=in.readUTF();
+
+        System.out.println("\nMatrix Type : "+result);
+
+        socket.close();
+    }
+}
